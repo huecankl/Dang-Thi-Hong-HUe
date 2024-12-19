@@ -1,0 +1,121 @@
+# Compositionally graded materials codes
+
+# Shapes
+
+shape = "Cylindrical" # @param ["Cylindrical", "Cuboid"]
+
+# @markdown #### Cuboid dimension (nm):
+x_dimension = 10 # @param {type:"number"}
+y_dimension = 10 # @param {type:"number"}
+z_dimension = 15 # @param {type:"number"}
+
+# @markdown #### Cylindrical dimension (nm):
+radius = 5 # @param {type:"number"}
+length_z = 15 # @param {type:"number"}
+
+# @markdown ## Grading
+grading_direction = "Axial" # @param ["Radial", "Axial"]
+grading_function = "S-FGM" # @param ["P-FGM", "E-FGM", "S-FGM", "Linear"]
+grading_function_parameter = 1 # @param {type:"number"}
+number_of_bins = 20 # @param {type:"integer"}
+# Lattice
+element_1 = "Cu" # @param ["Al", "Cr", "Fe", "Co", "Ni", "Cu", "Pt", "Au"] {allow-input: true}
+element_2 = "Ni" # @param ["Al", "Cr", "Fe", "Co", "Ni", "Cu", "Pt", "Au"] {allow-input: true}
+lattice_type = "FCC" # @param ["FCC", "BCC"]
+lattice_parameter_in_nm = 0.356 # @param {type:"number"}
+
+
+###################################################################################################
+elements = {'Ni': 28, 'Cu': 29, 'Ag': 47, 'Pt': 78, 'Au': 79, 'Fe': 56}
+p = grading_function_parameter
+FGMs = {
+    "P-FGM": lambda x, p: x**p,
+    "E-FGM": lambda x, p: 1 - np.exp(-x**p),
+    "S-FGM": lambda x, p: 1/2*(2*x)**p if x <= 1/2 else 1 - 1/2*(2*(1-x))**p,
+    "linear": lambda x, p: x,
+}
+FGM = FGMs[grading_function]
+
+###################################################################################################
+print("Applying FGM...")
+# Read header
+with open("tmp/polycrystal.xsf", "r") as f:
+  header_lines = 12
+  header = "".join(next(iter(f)) for _ in range(header_lines))
+# Read data
+data = np.loadtxt("tmp/polycrystal.xsf", skiprows=12)
+n_atom = data.shape[0]
+z = data[:, 0]
+x = data[:, 1]
+y = data[:, 2]
+z = data[:, 3]
+R = np.sqrt((x-lx/2)**2+(y-ly/2)**2)
+if grading_direction == "Axial":
+  g = z
+elif grading_direction == "Radial":
+  g = R
+
+###############################################################################
+# Replace atoms (FGM)
+g_min = g.min()
+g_max = g.max()
+g_range = np.linspace(g_min, g_max, number_of_bins+1)
+n_grad = len(g_range)-1
+for i in range(n_grad):
+  selection = (g_range[i] <= g) & (g <= g_range[i+1])
+  idxs = np.arange(n_atom)[selection]
+  comp = FGM(i/(n_grad-1), p)
+  replace_idxs = np.random.choice(idxs, int(comp*len(idxs)), replace=False)
+  data[:, 0][replace_idxs] = elements[element_2]
+
+###############################################################################
+# Write result
+with open("tmp/final.xsf", "w") as f:
+    f.write(header)  # Write header
+    np.savetxt(f, data, fmt="%d %f  %f  %f")  # Write coordinates
+!rm -f {element_1}{element_2}.lmp
+!{atomsk_bin} -v 0 tmp/final.xsf -sort species up {element_1}{element_2}.lmp
+
+###################################################################################################
+# Download file
+from google.colab import files
+files.download(f"{element_1}{element_2}.lmp")
+
+# @title # FGM Grading Functions
+import matplotlib.pyplot as plt
+FGMs = {
+    "P-FGM": lambda x, p: x**p,
+    "E-FGM": lambda x, p: 1 - np.exp(-x**p),
+    "S-FGM": lambda x, p: 1/2*(2*x)**p if x <= 1/2 else 1 - 1/2*(2*(1-x))**p,
+    "linear": lambda x, p: x,}
+
+P_FGM = FGMs["P-FGM"]
+E_FGM = FGMs["E-FGM"]
+S_FGM = FGMs["S-FGM"]
+
+fig, axs = plt.subplots(1, 3, figsize=(6*2,4), dpi=120)
+
+axs[0].set_title("P-FGM")
+xs = np.linspace(0, 1, 101)
+for p in [0.1, 0.2, 0.5, 1, 2, 5, 10]:
+  axs[0].plot(np.linspace(0, 1, 101), P_FGM(xs, p), label=p)
+axs[0].axis('scaled')
+axs[0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=4, title="p")
+
+axs[1].set_title("E-FGM")
+xs = np.linspace(0, 1, 101)
+for p in [0.1, 0.2, 0.5, 1, 2, 5, 10]:
+  axs[1].plot(np.linspace(0, 1, 101), E_FGM(xs, p), label=p)
+axs[1].axis('scaled')
+axs[1].set_ylim(-0.05, 1+0.05)
+axs[1].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=4, title="p")
+
+axs[2].set_title("S-FGM")
+xs = np.linspace(0, 1, 101)
+for p in [1, 2, 4, 10]:
+  axs[2].plot(np.linspace(0, 1, 101), [S_FGM(x, p) for x in xs], label=p)
+axs[2].axis('scaled')
+axs[2].legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=4, title="p")
+
+fig.tight_layout()
+
